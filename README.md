@@ -27,6 +27,10 @@ REQUIRED_CHANNEL_USERNAME=@имя_канала
 REQUIRED_CHANNEL_URL=https://t.me/имя_канала
 PROMO_TEXT=Больше подборок фильмов и новых кодов ищи в нашем канале.
 DATABASE_PATH=data/bot.sqlite3
+TELEGRAM_REQUEST_TIMEOUT=90
+POLLING_RETRY_DELAY=15
+TELEGRAM_FORCE_IPV4=false
+TELEGRAM_PROXY_URL=
 ```
 
 Запуск:
@@ -48,6 +52,32 @@ docker compose up -d --build
 ```bash
 docker compose logs -f
 ```
+
+Если в логах есть `TelegramNetworkError: Request timeout error`, контейнер не может
+достучаться до Telegram Bot API. Проверь доступ к `https://api.telegram.org` именно
+с VPS или из контейнера:
+
+```bash
+docker compose exec movie-code-bot python -c "import urllib.request; print(urllib.request.urlopen('https://api.telegram.org', timeout=10).status)"
+```
+
+При временных сетевых сбоях бот будет ждать `POLLING_RETRY_DELAY` секунд и
+запускать polling повторно.
+
+Если VPS открывает Telegram только по IPv4, поставь в `.env`:
+
+```env
+TELEGRAM_FORCE_IPV4=true
+```
+
+Если у провайдера VPS заблокирован или не маршрутизируется Telegram Bot API,
+укажи прокси:
+
+```env
+TELEGRAM_PROXY_URL=socks5://user:password@host:port
+```
+
+Подойдут `socks4://`, `socks5://`, `http://` и `https://` прокси.
 
 Остановить:
 

@@ -2,11 +2,17 @@ import asyncio
 from contextlib import suppress
 import html
 import logging
+import socket
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+)
 from aiogram.filters import Command, CommandStart
 from aiogram.filters.command import CommandObject
 from aiogram.types import CallbackQuery, Message
@@ -38,6 +44,18 @@ SUBSCRIBED_STATUSES = {"member", "administrator", "creator"}
 
 class SubscriptionCheckError(Exception):
     pass
+
+
+def create_bot_session(config: Config) -> AiohttpSession:
+    session = AiohttpSession(
+        proxy=config.telegram_proxy_url,
+        timeout=config.telegram_request_timeout,
+    )
+
+    if config.telegram_force_ipv4:
+        session._connector_init["family"] = socket.AF_INET
+
+    return session
 
 
 def is_admin(config: Config, user_id: int | None) -> bool:
@@ -391,15 +409,31 @@ async def main() -> None:
     db = Database(config.database_path)
     await db.init()
 
-    bot = Bot(
-        token=config.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
     dp = Dispatcher(config=config, db=db)
     dp.include_router(router)
 
-    logger.info("Bot started")
-    await dp.start_polling(bot)
+    while True:
+        session = create_bot_session(config)
+        bot = Bot(
+            token=config.bot_token,
+            session=session,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+
+        try:
+            me = await bot.me()
+            logger.info("Bot started as @%s (id=%s)", me.username, me.id)
+            await dp.start_polling(bot)
+            break
+        except (TelegramNetworkError, asyncio.TimeoutError, OSError):
+            logger.exception(
+                "Telegram API connection failed; retrying in %.0f seconds. "
+                "Check outbound HTTPS access to api.telegram.org from the VPS/container.",
+                config.polling_retry_delay,
+            )
+            await asyncio.sleep(config.polling_retry_delay)
+        finally:
+            await bot.session.close()
 
 
 if __name__ == "__main__":
